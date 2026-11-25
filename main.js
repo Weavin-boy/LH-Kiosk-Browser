@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Notification, nativeImage, session } = require('electron');
+const { app, BrowserWindow, Notification, nativeImage, session, protocol, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
@@ -24,6 +24,57 @@ let mainWindow;
 let lockedUrl = 'https://lasthavens.com/play';
 let windowTitle = 'Lasthavens';
 let allowExternalNavigation = false;
+let addonsDir;
+
+function getAddonsDir() {
+  if (app.isPackaged) {
+    return path.join(path.dirname(process.execPath), 'addons');
+  }
+  return path.join(__dirname, 'addons');
+}
+
+function ensureAddonsDir() {
+  addonsDir = getAddonsDir();
+  if (!fs.existsSync(addonsDir)) {
+    fs.mkdirSync(addonsDir, { recursive: true });
+  }
+  return addonsDir;
+}
+
+function scanAddons() {
+  const dir = ensureAddonsDir();
+  const addons = [];
+  if (!fs.existsSync(dir)) return addons;
+
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const folder = entry.name;
+    const folderPath = path.join(dir, folder);
+    const tocName = folder + '.toc';
+    const tocPath = path.join(folderPath, tocName);
+    if (!fs.existsSync(tocPath)) continue;
+
+    const files = {};
+    function walk(current, relative = '') {
+      const items = fs.readdirSync(current, { withFileTypes: true });
+      for (const item of items) {
+        const rel = relative ? relative + '/' + item.name : item.name;
+        const full = path.join(current, item.name);
+        if (item.isDirectory()) {
+          walk(full, rel);
+        } else {
+          files[rel] = full; // absolute path for protocol serving
+        }
+      }
+    }
+    walk(folderPath);
+
+    addons.push({ folder, files, tocPath });
+  }
+  console.log(`Found ${addons.length} local addon(s) in ${dir}`);
+  return addons;
+}
 
 function isValidHttpsUrl(url) {
   try {
@@ -34,7 +85,6 @@ function isValidHttpsUrl(url) {
   }
 }
 
-// Extract a rough root domain (eTLD+1). Handles common multi-part TLDs.
 function getRootDomain(hostname) {
   const parts = hostname.toLowerCase().split('.').filter(Boolean);
   if (parts.length <= 2) return parts.join('.');
@@ -116,7 +166,7 @@ function downloadFavicon(url) {
       }
       const chunks = [];
       let size = 0;
-      const maxBytes = 1024 * 1024; // 1 MB
+      const maxBytes = 1024 * 1024;
       res.on('data', (chunk) => {
         size += chunk.length;
         if (size > maxBytes) {
@@ -153,7 +203,7 @@ async function takeScreenshot() {
 
     const image = await mainWindow.webContents.capturePage();
     if (image.isEmpty()) {
-      throw new Error('Captured image is empty (window may have been occluded or not ready)');
+      throw new Error('Captured image is empty');
     }
 
     let screenshotsDir;
@@ -190,6 +240,127 @@ async function takeScreenshot() {
   }
 }
 
+// Adapted injection from lasthavens-addon-manager (runtime-core + loader)
+function buildInjection(addons) {
+  const fileMap = {};
+  const folders = [];
+  for (const a of addons) {
+    folders.push(a.folder);
+    for (const [rel, abs] of Object.entries(a.files)) {
+      const virtual = `Interface/AddOns/${a.folder}/${rel}`;
+      fileMap[virtual] = { size: fs.statSync(abs).size, path: abs.replace(/\\/g, '/') };
+    }
+  }
+
+  return `
+    (function() {
+      if (window.__lhAddonsInjected) return;
+      window.__lhAddonsInjected = true;
+
+      const files = ${JSON.stringify(fileMap)};
+      const folders = ${JSON.stringify(folders)};
+      const base = location.href;
+
+      // Minimal overlay install (adapted from runtime-core.js)
+      function installOverlay(fileMap, baseUrl) {
+        const Native = XMLHttpRequest;
+        const paths = Object.keys(fileMap);
+        const entries = paths.map(p => fileMap[p].size + '\t' + p).join('\n');
+
+        window.XMLHttpRequest = class extends Native {
+          open(method, url, ...args) {
+            this.answer = null;
+            this.p = new URL(String(url), baseUrl);
+            this.method = method;
+            this.path = decodeURIComponent(this.p.pathname);
+            this.local = paths.find(p =>
+              this.path === '/game/' + p || this.path.startsWith('/blocks/' + p + '/')
+            );
+            this.bundle =
+              /^\/blocks\/Interface\/AddOns\/[^/]+\/bundle-/.test(this.path) &&
+              paths.some(p => this.path.startsWith('/blocks/' + p.split('/').slice(0, 3).join('/') + '/'));
+
+            const target = this.local ? ('lhaddon://local/' + encodeURIComponent(fileMap[this.local].path)) : this.p.href;
+            return super.open(method, target, ...args);
+          }
+          setRequestHeader(k, v) {
+            if (this.local && k.toLowerCase() === 'range') {
+              this.range = v;
+              return;
+            }
+            return super.setRequestHeader(k, v);
+          }
+          send(body) {
+            if (this.bundle && this.method === 'GET') {
+              this.answer = { status: 404, text: '' };
+              return;
+            }
+            if (this.local && this.method === 'GET') {
+              const type = this.responseType;
+              this.responseType = 'arraybuffer';
+              super.send();
+              let bytes = new Uint8Array(super.response);
+              let start = 0, end = bytes.length;
+              const block = this.path.match(/\/(\d+)-(\d+)-(\d+)k\.bin$/);
+              if (block) {
+                start = Number(block[2]) * Number(block[3]) * 1024;
+                end = start + Number(block[3]) * 1024;
+              }
+              if (this.range) {
+                const m = this.range.match(/bytes=(\d+)-(\d+)/);
+                if (m) { start = +m[1]; end = +m[2] + 1; }
+              }
+              bytes = bytes.slice(start, end);
+              this.answer = { status: this.range ? 206 : 200, bytes, type };
+              return;
+            }
+            const r = super.send(body);
+            if (this.path === '/game-manifest.txt' && super.status === 200 && entries) {
+              this.answer = {
+                status: 200,
+                text: super.responseText.trimEnd() + '\n' + entries + '\n'
+              };
+            }
+            return r;
+          }
+          get status() { return this.answer?.status ?? super.status; }
+          get readyState() { return this.answer ? 4 : super.readyState; }
+          get responseText() {
+            return this.answer
+              ? (this.answer.text ?? new TextDecoder().decode(this.answer.bytes))
+              : super.responseText;
+          }
+          get response() {
+            return this.answer
+              ? (this.answer.bytes
+                  ? (this.answer.type === 'arraybuffer' ? this.answer.bytes.buffer : new TextDecoder().decode(this.answer.bytes))
+                  : this.answer.text)
+              : super.response;
+          }
+        };
+      }
+
+      // Worker patch (simplified from loader.js)
+      const NativeWorker = Worker;
+      window.Worker = class extends NativeWorker {
+        constructor(url, options) {
+          if (options?.name !== 'em-pthread') {
+            super(url, options);
+            return;
+          }
+          const original = new URL(String(url), location.href).href;
+          const source = \`const queue=[];function boot(e){if(!e.data?.__lhBoot){queue.push(e);return}removeEventListener('message',boot);(\${installOverlay.toString()})(e.data.files,\${JSON.stringify(original)});importScripts(\${JSON.stringify(original)});for(const event of queue)dispatchEvent(new MessageEvent('message',{data:event.data}));}addEventListener('message',boot);\`;
+          super(URL.createObjectURL(new Blob([source], { type: 'application/javascript' })), options);
+          this.postMessage({ __lhBoot: true, files: files });
+        }
+      };
+
+      installOverlay(files, base);
+      console.log('[LH] Local addons prepared:', folders);
+    })();
+  `;
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -204,12 +375,23 @@ function createWindow() {
       contextIsolation: true,
       sandbox: true,
       webSecurity: true,
-      devTools: false,
+      devTools: true, // enabled for testing branch
       enableBlinkFeatures: 'Gamepad',
     },
   });
 
   mainWindow.setMenu(null);
+
+  const addons = scanAddons();
+
+  mainWindow.webContents.on('did-start-loading', () => {
+    if (addons.length === 0) return;
+    const code = buildInjection(addons);
+    mainWindow.webContents.executeJavaScript(code).catch(err =>
+      console.error('Addon injection failed:', err)
+    );
+  });
+
   mainWindow.loadURL(lockedUrl);
 
   mainWindow.webContents.on('page-favicon-updated', async (event, favicons) => {
@@ -252,7 +434,6 @@ function createWindow() {
   mainWindow.webContents.on('before-input-event', (event, input) => {
     const { key, control, alt, meta, shift } = input;
 
-    // F11: toggle fullscreen (only when this window is focused)
     if (key === 'F11') {
       event.preventDefault();
       if (mainWindow) {
@@ -261,24 +442,20 @@ function createWindow() {
       return;
     }
 
-    // F12: screenshot
     if (key === 'F12') {
       event.preventDefault();
       takeScreenshot();
       return;
     }
 
-    // Allow F1 and F3 to pass through to the page
     if (key === 'F1' || key === 'F3') {
       return;
     }
 
-    // Allow all Ctrl/Cmd, Alt, and Shift (and combinations) so the page receives them
     if (control || meta || alt || shift) {
       return;
     }
 
-    // Still block bare function keys that could refresh or escape the lock
     const blocked =
       key === 'F5' ||
       key === 'F6' ||
@@ -295,7 +472,6 @@ function createWindow() {
   mainWindow.webContents.on('did-finish-load', () => {
     mainWindow.webContents.executeJavaScript(`
       (function() {
-        // Prevent multiple gamepad loops
         if (window.__lockedBrowserGamepad) return;
         window.__lockedBrowserGamepad = true;
 
@@ -318,7 +494,6 @@ function createWindow() {
         window.addEventListener('gamepadconnected', () => console.log('Gamepad connected'));
         pollGamepad();
 
-        // Auto pointer lock on right-click so mouse stays locked during drag
         let rightButtonDown = false;
 
         document.addEventListener('mousedown', (e) => {
@@ -364,6 +539,26 @@ function createWindow() {
 
 app.whenReady().then(() => {
   loadConfig();
+  ensureAddonsDir();
+
+  // Custom protocol to serve local addon files
+  protocol.handle('lhaddon', (request) => {
+    try {
+      const url = new URL(request.url);
+      const filePath = decodeURIComponent(url.pathname.replace(/^\/local\//, ''));
+      if (!filePath.startsWith(addonsDir.replace(/\\/g, '/')) && !path.isAbsolute(filePath)) {
+        // safety
+      }
+      const abs = path.normalize(filePath);
+      if (!abs.startsWith(path.normalize(addonsDir))) {
+        return new Response('Forbidden', { status: 403 });
+      }
+      return net.fetch(`file://${abs}`);
+    } catch (e) {
+      console.error('lhaddon protocol error', e);
+      return new Response('Error', { status: 500 });
+    }
+  });
 
   const allowedPermissions = new Set([
     'clipboard-read',
