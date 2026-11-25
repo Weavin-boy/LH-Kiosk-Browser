@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g. 1.0.0a)'
+        description: 'Version to release (e.g. 1.0)'
         required: true
-        default: '1.0.0a'
+        default: '1.0'
 
 permissions:
   contents: write
@@ -35,25 +35,25 @@ jobs:
 
       - name: Create clean folder structure
         run: |
-          New-Item -ItemType Directory -Path "dist\output\Lasthavens" -Force | Out-Null
-          Copy-Item -Path "dist\win-unpacked\*" -Destination "dist\output\Lasthavens\" -Recurse -Force
+          New-Item -ItemType Directory -Path "dist\output\LH-Kiosk" -Force | Out-Null
+          Copy-Item -Path "dist\win-unpacked\*" -Destination "dist\output\LH-Kiosk\" -Recurse -Force
         shell: pwsh
 
       - name: Upload artifact
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
-          name: Lasthavens-Portable
+          name: LH-Kiosk-Portable
           path: dist/output
 
       - name: Zip for release
         run: |
-          Compress-Archive -Path "dist\output\Lasthavens" -DestinationPath "dist\Lasthavens-Portable.zip" -Force
+          Compress-Archive -Path "dist\output\LH-Kiosk" -DestinationPath "dist\LH-Kiosk-Portable.zip" -Force
         shell: pwsh
 
       - name: Compute SHA-256
         id: sha
         run: |
-          $hash = (Get-FileHash -Path "dist\Lasthavens-Portable.zip" -Algorithm SHA256).Hash.ToLower()
+          $hash = (Get-FileHash -Path "dist\LH-Kiosk-Portable.zip" -Algorithm SHA256).Hash.ToLower()
           "sha256=$hash" >> $env:GITHUB_OUTPUT
           Write-Host "SHA-256: $hash"
         shell: pwsh
@@ -64,7 +64,7 @@ jobs:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.ref_name }}
           name: LH-Kiosk-Browser ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.ref_name }}
           body: |
-            SHA-256 of Lasthavens-Portable.zip:
+            SHA-256 of LH-Kiosk-Portable.zip:
             `${{ steps.sha.outputs.sha256 }}`
 
             Electron fuses:
@@ -74,7 +74,7 @@ jobs:
             - enableNodeCliInspectArguments: false
             - enableEmbeddedAsarIntegrityValidation: true
             - onlyLoadAppFromAsar: true
-          files: dist/Lasthavens-Portable.zip
+          files: dist/LH-Kiosk-Portable.zip
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
