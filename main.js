@@ -24,7 +24,6 @@ let lockedUrl = 'https://lasthavens.com/play';
 let windowTitle = 'Lasthavens';
 let allowExternalNavigation = false;
 let addonsDir;
-let injectionScript = null;
 
 function getAddonsDir() {
   if (app.isPackaged) {
@@ -76,12 +75,11 @@ function scanAddons() {
   return addons;
 }
 
-function buildInjectionScript(addons) {
-  if (!addons.length) return null;
-  const injectDir = path.join(__dirname, 'inject');
-  const runtimeCore = fs.readFileSync(path.join(injectDir, 'runtime-core.js'), 'utf8');
-  const loader = fs.readFileSync(path.join(injectDir, 'loader.js'), 'utf8');
-  return 'window.__LH_PAYLOAD = ' + JSON.stringify({ addons }) + ';\n' + runtimeCore + '\n' + loader;
+function writePayloadFile(addons) {
+  const payloadPath = path.join(app.getPath('userData'), 'lh-payload.json');
+  fs.writeFileSync(payloadPath, JSON.stringify({ addons }), 'utf8');
+  console.log('Wrote payload', payloadPath, 'addons:', addons.length);
+  return payloadPath;
 }
 
 function isValidHttpsUrl(url) {
@@ -248,18 +246,9 @@ async function takeScreenshot() {
   }
 }
 
-function injectAddons(webContents) {
-  if (!injectionScript) return;
-  webContents.executeJavaScript(injectionScript).then(() => {
-    console.log('[LH] addon injection executed');
-  }).catch(err => {
-    console.error('[LH] addon injection failed:', err);
-  });
-}
-
 function createWindow() {
   const addons = scanAddons();
-  injectionScript = buildInjectionScript(addons);
+  const payloadPath = writePayloadFile(addons);
 
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -270,9 +259,11 @@ function createWindow() {
     frame: true,
     titleBarStyle: 'default',
     webPreferences: {
+      preload: path.join(__dirname, 'inject', 'preload.js'),
+      additionalArguments: ['--lh-payload=' + payloadPath],
       nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: true,
+      contextIsolation: false, // allow preload to use Node (fs)
+      sandbox: false,
       webSecurity: true,
       devTools: true,
       enableBlinkFeatures: 'Gamepad',
@@ -283,14 +274,6 @@ function createWindow() {
 
   // Open DevTools automatically (testing)
   mainWindow.webContents.openDevTools({ mode: 'detach' });
-
-  mainWindow.webContents.on('did-start-loading', () => {
-    injectAddons(mainWindow.webContents);
-  });
-
-  mainWindow.webContents.on('dom-ready', () => {
-    injectAddons(mainWindow.webContents);
-  });
 
   mainWindow.loadURL(lockedUrl);
 
