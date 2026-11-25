@@ -62,7 +62,6 @@ function scanAddons() {
         if (item.isDirectory()) {
           walk(full, rel);
         } else {
-          // Read as base64 so we can create blob URLs in the page (same as the extension)
           const buf = fs.readFileSync(full);
           files[rel] = buf.toString('base64');
         }
@@ -240,31 +239,16 @@ async function takeScreenshot() {
   }
 }
 
-function getInjectDir() {
-  return path.join(__dirname, 'inject');
-}
-
-async function injectAddons(webContents, addons) {
-  if (!addons.length) return;
-
-  const injectDir = getInjectDir();
-  const runtimeCore = fs.readFileSync(path.join(injectDir, 'runtime-core.js'), 'utf8');
-  const loader = fs.readFileSync(path.join(injectDir, 'loader.js'), 'utf8');
-
-  // Set payload first, then run the known-good scripts
-  const payloadScript = 'window.__LH_PAYLOAD = ' + JSON.stringify({ addons }) + ';';
-
-  try {
-    await webContents.executeJavaScript(payloadScript);
-    await webContents.executeJavaScript(runtimeCore);
-    await webContents.executeJavaScript(loader);
-    console.log('Addon injection completed');
-  } catch (err) {
-    console.error('Addon injection failed:', err);
-  }
+function writePayloadFile(addons) {
+  const payloadPath = path.join(app.getPath('userData'), 'lh-payload.json');
+  fs.writeFileSync(payloadPath, JSON.stringify({ addons }), 'utf8');
+  return payloadPath;
 }
 
 function createWindow() {
+  const addons = scanAddons();
+  const payloadPath = writePayloadFile(addons);
+
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -274,9 +258,11 @@ function createWindow() {
     frame: true,
     titleBarStyle: 'default',
     webPreferences: {
+      preload: path.join(__dirname, 'inject', 'preload.js'),
+      additionalArguments: ['--lh-payload=' + payloadPath],
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: true,
+      sandbox: false, // needed so preload can read the payload file
       webSecurity: true,
       devTools: true,
       enableBlinkFeatures: 'Gamepad',
@@ -284,13 +270,6 @@ function createWindow() {
   });
 
   mainWindow.setMenu(null);
-
-  const addons = scanAddons();
-
-  mainWindow.webContents.on('did-start-loading', () => {
-    injectAddons(mainWindow.webContents, addons);
-  });
-
   mainWindow.loadURL(lockedUrl);
 
   mainWindow.webContents.on('page-favicon-updated', async (event, favicons) => {
