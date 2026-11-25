@@ -3,6 +3,11 @@ const path = require('path');
 const fs = require('fs');
 const https = require('https');
 
+// Must be called before app is ready
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'lhaddon', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }
+]);
+
 // Force all app data into a local folder (fully portable)
 if (app.isPackaged) {
   const portableDir = path.dirname(process.execPath);
@@ -64,7 +69,7 @@ function scanAddons() {
         if (item.isDirectory()) {
           walk(full, rel);
         } else {
-          files[rel] = full; // absolute path for protocol serving
+          files[rel] = full;
         }
       }
     }
@@ -261,7 +266,6 @@ function buildInjection(addons) {
       const folders = ${JSON.stringify(folders)};
       const base = location.href;
 
-      // Minimal overlay install (adapted from runtime-core.js)
       function installOverlay(fileMap, baseUrl) {
         const Native = XMLHttpRequest;
         const paths = Object.keys(fileMap);
@@ -340,7 +344,6 @@ function buildInjection(addons) {
         };
       }
 
-      // Worker patch (simplified from loader.js)
       const NativeWorker = Worker;
       window.Worker = class extends NativeWorker {
         constructor(url, options) {
@@ -375,7 +378,7 @@ function createWindow() {
       contextIsolation: true,
       sandbox: true,
       webSecurity: true,
-      devTools: true, // enabled for testing branch
+      devTools: true,
       enableBlinkFeatures: 'Gamepad',
     },
   });
@@ -541,19 +544,16 @@ app.whenReady().then(() => {
   loadConfig();
   ensureAddonsDir();
 
-  // Custom protocol to serve local addon files
   protocol.handle('lhaddon', (request) => {
     try {
       const url = new URL(request.url);
-      const filePath = decodeURIComponent(url.pathname.replace(/^\/local\//, ''));
-      if (!filePath.startsWith(addonsDir.replace(/\\/g, '/')) && !path.isAbsolute(filePath)) {
-        // safety
-      }
-      const abs = path.normalize(filePath);
-      if (!abs.startsWith(path.normalize(addonsDir))) {
+      let filePath = decodeURIComponent(url.pathname.replace(/^\/local\//, ''));
+      filePath = path.normalize(filePath);
+      const normalizedAddons = path.normalize(addonsDir);
+      if (!filePath.startsWith(normalizedAddons)) {
         return new Response('Forbidden', { status: 403 });
       }
-      return net.fetch(`file://${abs}`);
+      return net.fetch(`file://${filePath}`);
     } catch (e) {
       console.error('lhaddon protocol error', e);
       return new Response('Error', { status: 500 });
