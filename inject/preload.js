@@ -1,35 +1,29 @@
-// Preload: inject addon overlay as early as possible
-const { webFrame, ipcRenderer } = require('electron');
+// Early injection preload (sandbox/contextIsolation disabled in testing builds)
+const { webFrame } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
-function log(msg) {
-  console.log('[LH preload]', msg);
-}
-
 try {
-  const arg = process.argv.find(a => a.startsWith('--lh-payload='));
+  const arg = process.argv.find(function (a) { return a.indexOf('--lh-payload=') === 0; });
   if (!arg) {
-    log('no --lh-payload argument');
+    console.log('[LH preload] no payload arg');
   } else {
     const file = arg.slice('--lh-payload='.length);
-    log('reading payload from ' + file);
+    console.log('[LH preload] reading', file);
     const raw = fs.readFileSync(file, 'utf8');
     const payload = JSON.parse(raw);
-    log('payload has ' + (payload.addons || []).length + ' addons');
 
     const injectDir = __dirname;
     const runtimeCore = fs.readFileSync(path.join(injectDir, 'runtime-core.js'), 'utf8');
     const loader = fs.readFileSync(path.join(injectDir, 'loader.js'), 'utf8');
 
-    const script =
-      'window.__LH_PAYLOAD = ' + JSON.stringify(payload) + ';\n' +
-      runtimeCore + '\n' +
-      loader;
+    const script = 'window.__LH_PAYLOAD = ' + JSON.stringify(payload) + ';\n' + runtimeCore + '\n' + loader;
 
-    webFrame.executeJavaScript(script)
-      .then(() => log('injection completed'))
-      .catch(err => console.error('[LH preload] injection failed', err));
+    webFrame.executeJavaScript(script).then(function () {
+      console.log('[LH preload] early injection done');
+    }).catch(function (err) {
+      console.error('[LH preload] injection failed', err);
+    });
   }
 } catch (e) {
   console.error('[LH preload] error', e);
