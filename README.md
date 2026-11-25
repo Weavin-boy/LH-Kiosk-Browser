@@ -6,6 +6,17 @@ It shows only the title bar and stays on Lasthavens (or the same domain, includi
 
 Forked/adapted from [simple-kiosk-browser](https://github.com/Weavin-boy/simple-kiosk-browser).
 
+## Local Addons (testing branch)
+
+On the **testing** branch the app supports local WoW 3.3.5a addons, using the same injection technique as the [Lasthavens Addon Manager](https://github.com/Jamba777/lasthavens-addon-manager) Chrome extension.
+
+- Place addon folders in the `addons/` directory next to the app (or project root when developing).
+- Each folder must contain a matching `.toc` file (e.g. `Bagnon/Bagnon.toc`).
+- The app scans the folder on startup, serves the files via a custom protocol, and injects them into the game client by overriding `XMLHttpRequest` and the game worker (same approach as the extension).
+- Restart the app after adding or changing addons.
+
+See `addons/README.md` for details. This is experimental.
+
 ## What it does
 - No address bar, tabs, or extra buttons
 - Starts on https://lasthavens.com/play
@@ -34,7 +45,7 @@ Forked/adapted from [simple-kiosk-browser](https://github.com/Weavin-boy/simple-
 1. Install Node.js
 2. Clone and run:
    ```bash
-   git clone https://github.com/Weavin-boy/lasthavens-kiosk-browser.git
+   git clone -b testing https://github.com/Weavin-boy/lasthavens-kiosk-browser.git
    cd lasthavens-kiosk-browser
    npm install
    npm start
