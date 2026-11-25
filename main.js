@@ -24,6 +24,7 @@ let lockedUrl = 'https://lasthavens.com/play';
 let windowTitle = 'Lasthavens';
 let allowExternalNavigation = false;
 let addonsDir;
+let injectionScript = null;
 
 function getAddonsDir() {
   if (app.isPackaged) {
@@ -73,6 +74,14 @@ function scanAddons() {
   }
   console.log(`Found ${addons.length} local addon(s) in ${dir}`);
   return addons;
+}
+
+function buildInjectionScript(addons) {
+  if (!addons.length) return null;
+  const injectDir = path.join(__dirname, 'inject');
+  const runtimeCore = fs.readFileSync(path.join(injectDir, 'runtime-core.js'), 'utf8');
+  const loader = fs.readFileSync(path.join(injectDir, 'loader.js'), 'utf8');
+  return 'window.__LH_PAYLOAD = ' + JSON.stringify({ addons }) + ';\n' + runtimeCore + '\n' + loader;
 }
 
 function isValidHttpsUrl(url) {
@@ -239,16 +248,18 @@ async function takeScreenshot() {
   }
 }
 
-function writePayloadFile(addons) {
-  const payloadPath = path.join(app.getPath('userData'), 'lh-payload.json');
-  fs.writeFileSync(payloadPath, JSON.stringify({ addons }), 'utf8');
-  console.log('Wrote payload to', payloadPath, 'addons:', addons.length);
-  return payloadPath;
+function injectAddons(webContents) {
+  if (!injectionScript) return;
+  webContents.executeJavaScript(injectionScript).then(() => {
+    console.log('[LH] addon injection executed');
+  }).catch(err => {
+    console.error('[LH] addon injection failed:', err);
+  });
 }
 
 function createWindow() {
   const addons = scanAddons();
-  const payloadPath = writePayloadFile(addons);
+  injectionScript = buildInjectionScript(addons);
 
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -259,11 +270,9 @@ function createWindow() {
     frame: true,
     titleBarStyle: 'default',
     webPreferences: {
-      preload: path.join(__dirname, 'inject', 'preload.js'),
-      additionalArguments: ['--lh-payload=' + payloadPath],
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: false,
+      sandbox: true,
       webSecurity: true,
       devTools: true,
       enableBlinkFeatures: 'Gamepad',
@@ -272,8 +281,16 @@ function createWindow() {
 
   mainWindow.setMenu(null);
 
-  // Open DevTools automatically so we can see injection logs (testing builds)
+  // Open DevTools automatically (testing)
   mainWindow.webContents.openDevTools({ mode: 'detach' });
+
+  mainWindow.webContents.on('did-start-loading', () => {
+    injectAddons(mainWindow.webContents);
+  });
+
+  mainWindow.webContents.on('dom-ready', () => {
+    injectAddons(mainWindow.webContents);
+  });
 
   mainWindow.loadURL(lockedUrl);
 
@@ -317,7 +334,6 @@ function createWindow() {
   mainWindow.webContents.on('before-input-event', (event, input) => {
     const { key, control, alt, meta, shift } = input;
 
-    // Ctrl+Shift+I toggles DevTools
     if ((control || meta) && shift && key.toLowerCase() === 'i') {
       event.preventDefault();
       if (mainWindow.webContents.isDevToolsOpened()) {
