@@ -30,7 +30,10 @@
     }
   }
 
-  // Worker patch (same pattern as the Chrome extension)
+  // Minimal spans (blocks.idx masking) — empty for now; can be extended later
+  const spans = [];
+
+  // Worker patch matching the Chrome extension (includes WebVfsStoreIo mask)
   window.Worker = class extends NativeWorker {
     constructor(url, options) {
       if (!options || options.name !== "em-pthread") {
@@ -42,11 +45,11 @@
         "const queue=[];function boot(e){if(!e.data||!e.data.__lhBoot){queue.push(e);return}" +
         "removeEventListener('message',boot);(" + install.toString() + ")(e.data.files," +
         JSON.stringify(original) + ");importScripts(" + JSON.stringify(original) +
-        ");for(const event of queue)dispatchEvent(new MessageEvent('message',{data:event.data}));}" +
+        ");const assign=assignWasmImports;assignWasmImports=function(){assign();const io=wasmImports.WebVfsStoreIo;wasmImports.WebVfsStoreIo=function(file,write,ptr,count,at){const got=io(file,write,ptr,count,at);if(file===1&&!write&&got>0){for(const [start,len,value]of e.data.spans){const lo=Math.max(start,at),hi=Math.min(start+len,at+got);if(hi>lo)HEAPU8.fill(value,ptr+lo-at,ptr+hi-at)}}return got}};for(const event of queue)dispatchEvent(new MessageEvent('message',{data:event.data}));}" +
         "addEventListener('message',boot);";
 
       super(URL.createObjectURL(new Blob([source], { type: "application/javascript" })), options);
-      this.postMessage({ __lhBoot: true, files: files, spans: [] });
+      this.postMessage({ __lhBoot: true, files: files, spans: spans });
     }
   };
 
