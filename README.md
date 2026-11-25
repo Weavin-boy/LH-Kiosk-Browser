@@ -1,10 +1,26 @@
-# Lasthavens Kiosk Browser
+# LH-Kiosk-Browser
 
 A simple kiosk-style browser locked to Lasthavens.
 
 It shows only the title bar and stays on Lasthavens (or the same domain, including subdomains).
 
+**I have no association with Lasthavens.** This is an independent community project.
+
 Forked/adapted from [simple-kiosk-browser](https://github.com/Weavin-boy/simple-kiosk-browser).
+
+## Local Addons
+
+The app supports local WoW 3.3.5a addons. The injection code is based on the [Lasthavens Addon Manager](https://github.com/Jamba777/lasthavens-addon-manager) Chrome extension by Jamba777. Credit to them for the overlay technique.
+
+### How to add addons
+1. Unzip the app.
+2. Open the `addons` folder next to the executable (it is created for you).
+3. Put each addon in its own folder. The folder must contain a matching `.toc` file.
+   - Example: `addons/GTFO/GTFO.toc` (and the rest of the addon files)
+   - Example: `addons/_NPCScan/_NPCScan.toc`
+4. Restart the app. The addons are loaded automatically.
+
+See `addons/README.txt` for a short reminder.
 
 ## What it does
 - No address bar, tabs, or extra buttons
@@ -34,8 +50,8 @@ Forked/adapted from [simple-kiosk-browser](https://github.com/Weavin-boy/simple-
 1. Install Node.js
 2. Clone and run:
    ```bash
-   git clone https://github.com/Weavin-boy/lasthavens-kiosk-browser.git
-   cd lasthavens-kiosk-browser
+   git clone https://github.com/Weavin-boy/LH-Kiosk-Browser.git
+   cd LH-Kiosk-Browser
    npm install
    npm start
    ```

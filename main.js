@@ -1,9 +1,8 @@
-const { app, BrowserWindow, Notification, nativeImage, session } = require('electron');
+const { app, BrowserWindow, Notification, nativeImage, session, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
 
-// Force all app data into a local folder (fully portable)
 if (app.isPackaged) {
   const portableDir = path.dirname(process.execPath);
   const dataDir = path.join(portableDir, 'data');
@@ -24,6 +23,66 @@ let mainWindow;
 let lockedUrl = 'https://lasthavens.com/play';
 let windowTitle = 'Lasthavens';
 let allowExternalNavigation = false;
+let addonsDir;
+let injectionScript = null;
+
+function getAddonsDir() {
+  if (app.isPackaged) {
+    return path.join(path.dirname(process.execPath), 'addons');
+  }
+  return path.join(__dirname, 'addons');
+}
+
+function ensureAddonsDir() {
+  addonsDir = getAddonsDir();
+  if (!fs.existsSync(addonsDir)) {
+    fs.mkdirSync(addonsDir, { recursive: true });
+  }
+  return addonsDir;
+}
+
+function scanAddons() {
+  const dir = ensureAddonsDir();
+  const addons = [];
+  if (!fs.existsSync(dir)) return addons;
+
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const folder = entry.name;
+    const folderPath = path.join(dir, folder);
+    const tocPath = path.join(folderPath, folder + '.toc');
+    if (!fs.existsSync(tocPath)) continue;
+
+    const files = {};
+    function walk(current, relative = '') {
+      const items = fs.readdirSync(current, { withFileTypes: true });
+      for (const item of items) {
+        const rel = relative ? relative + '/' + item.name : item.name;
+        const full = path.join(current, item.name);
+        if (item.isDirectory()) {
+          walk(full, rel);
+        } else {
+          const buf = fs.readFileSync(full);
+          files[rel] = buf.toString('base64');
+        }
+      }
+    }
+    walk(folderPath);
+
+    addons.push({ folder, files });
+  }
+  console.log(`Found ${addons.length} local addon(s) in ${dir}`);
+  return addons;
+}
+
+function buildInjectionScript(addons) {
+  if (!addons.length) return null;
+  const injectDir = path.join(__dirname, 'inject');
+  const runtimeCore = fs.readFileSync(path.join(injectDir, 'runtime-core.js'), 'utf8');
+  const loader = fs.readFileSync(path.join(injectDir, 'loader.js'), 'utf8');
+  return 'window.__LH_PAYLOAD = ' + JSON.stringify({ addons }) + ';\n' + runtimeCore + '\n' + loader;
+}
 
 function isValidHttpsUrl(url) {
   try {
@@ -34,7 +93,6 @@ function isValidHttpsUrl(url) {
   }
 }
 
-// Extract a rough root domain (eTLD+1). Handles common multi-part TLDs.
 function getRootDomain(hostname) {
   const parts = hostname.toLowerCase().split('.').filter(Boolean);
   if (parts.length <= 2) return parts.join('.');
@@ -116,7 +174,7 @@ function downloadFavicon(url) {
       }
       const chunks = [];
       let size = 0;
-      const maxBytes = 1024 * 1024; // 1 MB
+      const maxBytes = 1024 * 1024;
       res.on('data', (chunk) => {
         size += chunk.length;
         if (size > maxBytes) {
@@ -153,7 +211,7 @@ async function takeScreenshot() {
 
     const image = await mainWindow.webContents.capturePage();
     if (image.isEmpty()) {
-      throw new Error('Captured image is empty (window may have been occluded or not ready)');
+      throw new Error('Captured image is empty');
     }
 
     let screenshotsDir;
@@ -191,6 +249,9 @@ async function takeScreenshot() {
 }
 
 function createWindow() {
+  const addons = scanAddons();
+  injectionScript = buildInjectionScript(addons);
+
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -200,6 +261,7 @@ function createWindow() {
     frame: true,
     titleBarStyle: 'default',
     webPreferences: {
+      preload: path.join(__dirname, 'inject', 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
@@ -210,6 +272,15 @@ function createWindow() {
   });
 
   mainWindow.setMenu(null);
+
+  // Preload signals when it is ready; we immediately send the injection script
+  ipcMain.on('lh-preload-ready', (event) => {
+    if (injectionScript && event.sender === mainWindow.webContents) {
+      console.log('[LH] sending injection to preload');
+      event.sender.send('lh-inject', injectionScript);
+    }
+  });
+
   mainWindow.loadURL(lockedUrl);
 
   mainWindow.webContents.on('page-favicon-updated', async (event, favicons) => {
@@ -252,7 +323,6 @@ function createWindow() {
   mainWindow.webContents.on('before-input-event', (event, input) => {
     const { key, control, alt, meta, shift } = input;
 
-    // F11: toggle fullscreen (only when this window is focused)
     if (key === 'F11') {
       event.preventDefault();
       if (mainWindow) {
@@ -261,24 +331,20 @@ function createWindow() {
       return;
     }
 
-    // F12: screenshot
     if (key === 'F12') {
       event.preventDefault();
       takeScreenshot();
       return;
     }
 
-    // Allow F1 and F3 to pass through to the page
     if (key === 'F1' || key === 'F3') {
       return;
     }
 
-    // Allow all Ctrl/Cmd, Alt, and Shift (and combinations) so the page receives them
     if (control || meta || alt || shift) {
       return;
     }
 
-    // Still block bare function keys that could refresh or escape the lock
     const blocked =
       key === 'F5' ||
       key === 'F6' ||
@@ -295,7 +361,6 @@ function createWindow() {
   mainWindow.webContents.on('did-finish-load', () => {
     mainWindow.webContents.executeJavaScript(`
       (function() {
-        // Prevent multiple gamepad loops
         if (window.__lockedBrowserGamepad) return;
         window.__lockedBrowserGamepad = true;
 
@@ -318,7 +383,6 @@ function createWindow() {
         window.addEventListener('gamepadconnected', () => console.log('Gamepad connected'));
         pollGamepad();
 
-        // Auto pointer lock on right-click so mouse stays locked during drag
         let rightButtonDown = false;
 
         document.addEventListener('mousedown', (e) => {
@@ -364,6 +428,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   loadConfig();
+  ensureAddonsDir();
 
   const allowedPermissions = new Set([
     'clipboard-read',
