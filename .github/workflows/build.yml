@@ -1,0 +1,72 @@
+name: Build Portable Windows App
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 1.0.3)'
+        required: true
+        default: '1.0.4a'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build portable app
+        run: npm run build:win
+
+      - name: Create clean folder structure
+        run: |
+          New-Item -ItemType Directory -Path "dist\output\Lasthavens" -Force | Out-Null
+          Copy-Item -Path "dist\win-unpacked\*" -Destination "dist\output\Lasthavens\" -Recurse -Force
+        shell: pwsh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: Lasthavens-Portable
+          path: dist/output
+
+      - name: Zip for release
+        run: |
+          Compress-Archive -Path "dist\output\Lasthavens" -DestinationPath "dist\Lasthavens-Portable.zip" -Force
+        shell: pwsh
+
+      - name: Compute SHA-256
+        id: sha
+        run: |
+          $hash = (Get-FileHash -Path "dist\Lasthavens-Portable.zip" -Algorithm SHA256).Hash.ToLower()
+          "sha256=$hash" >> $env:GITHUB_OUTPUT
+          Write-Host "SHA-256: $hash"
+        shell: pwsh
+
+      - name: Create Release
+        uses: softprops/action-gh-release@28ab305d0ffa26d60ec4bd614126329e26c7a0ec # v3.0.4
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.ref_name }}
+          name: Lasthavens ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.ref_name }}
+          body: |
+            SHA-256 of Lasthavens-Portable.zip:
+            `${{ steps.sha.outputs.sha256 }}`
+          files: dist/Lasthavens-Portable.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
