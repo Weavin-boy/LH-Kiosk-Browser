@@ -1,11 +1,7 @@
-const { app, BrowserWindow, Notification, nativeImage, session, protocol, net } = require('electron');
+const { app, BrowserWindow, Notification, nativeImage, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
-
-protocol.registerSchemesAsPrivileged([
-  { scheme: 'lhaddon', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }
-]);
 
 if (app.isPackaged) {
   const portableDir = path.dirname(process.execPath);
@@ -66,13 +62,15 @@ function scanAddons() {
         if (item.isDirectory()) {
           walk(full, rel);
         } else {
-          files[rel] = full;
+          // Read as base64 so we can create blob URLs in the page (same as the extension)
+          const buf = fs.readFileSync(full);
+          files[rel] = buf.toString('base64');
         }
       }
     }
     walk(folderPath);
 
-    addons.push({ folder, files, tocPath });
+    addons.push({ folder, files });
   }
   console.log(`Found ${addons.length} local addon(s) in ${dir}`);
   return addons;
@@ -242,132 +240,28 @@ async function takeScreenshot() {
   }
 }
 
-function buildInjection(addons) {
-  const fileMap = {};
-  const folders = [];
-  for (const a of addons) {
-    folders.push(a.folder);
-    for (const [rel, abs] of Object.entries(a.files)) {
-      const virtual = `Interface/AddOns/${a.folder}/${rel}`;
-      fileMap[virtual] = { size: fs.statSync(abs).size, path: abs.replace(/\\/g, '/') };
-    }
+function getInjectDir() {
+  return path.join(__dirname, 'inject');
+}
+
+async function injectAddons(webContents, addons) {
+  if (!addons.length) return;
+
+  const injectDir = getInjectDir();
+  const runtimeCore = fs.readFileSync(path.join(injectDir, 'runtime-core.js'), 'utf8');
+  const loader = fs.readFileSync(path.join(injectDir, 'loader.js'), 'utf8');
+
+  // Set payload first, then run the known-good scripts
+  const payloadScript = 'window.__LH_PAYLOAD = ' + JSON.stringify({ addons }) + ';';
+
+  try {
+    await webContents.executeJavaScript(payloadScript);
+    await webContents.executeJavaScript(runtimeCore);
+    await webContents.executeJavaScript(loader);
+    console.log('Addon injection completed');
+  } catch (err) {
+    console.error('Addon injection failed:', err);
   }
-
-  const filesJson = JSON.stringify(fileMap);
-  const foldersJson = JSON.stringify(folders);
-
-  return `(
-function() {
-  if (window.__lhAddonsInjected) return;
-  window.__lhAddonsInjected = true;
-
-  const files = ${filesJson};
-  const folders = ${foldersJson};
-  const base = location.href;
-
-  function installOverlay(fileMap, baseUrl) {
-    const Native = XMLHttpRequest;
-    const paths = Object.keys(fileMap);
-    const entries = paths.map(function(p) { return fileMap[p].size + '\t' + p; }).join('\n');
-
-    window.XMLHttpRequest = class extends Native {
-      open(method, url) {
-        var args = Array.prototype.slice.call(arguments, 2);
-        this.answer = null;
-        this.p = new URL(String(url), baseUrl);
-        this.method = method;
-        this.path = decodeURIComponent(this.p.pathname);
-        this.local = paths.find(function(p) {
-          return this.path === '/game/' + p || this.path.indexOf('/blocks/' + p + '/') === 0;
-        }, this);
-        this.bundle =
-          /^\/blocks\/Interface\/AddOns\/[^/]+\/bundle-/.test(this.path) &&
-          paths.some(function(p) {
-            return this.path.indexOf('/blocks/' + p.split('/').slice(0, 3).join('/') + '/') === 0;
-          }, this);
-
-        var target = this.local ? ('lhaddon://local/' + encodeURIComponent(fileMap[this.local].path)) : this.p.href;
-        return Native.prototype.open.apply(this, [method, target].concat(args));
-      }
-      setRequestHeader(k, v) {
-        if (this.local && k.toLowerCase() === 'range') {
-          this.range = v;
-          return;
-        }
-        return Native.prototype.setRequestHeader.call(this, k, v);
-      }
-      send(body) {
-        if (this.bundle && this.method === 'GET') {
-          this.answer = { status: 404, text: '' };
-          return;
-        }
-        if (this.local && this.method === 'GET') {
-          var type = this.responseType;
-          this.responseType = 'arraybuffer';
-          Native.prototype.send.call(this);
-          var bytes = new Uint8Array(this.response);
-          var start = 0, end = bytes.length;
-          var block = this.path.match(/\/(\d+)-(\d+)-(\d+)k\.bin$/);
-          if (block) {
-            start = Number(block[2]) * Number(block[3]) * 1024;
-            end = start + Number(block[3]) * 1024;
-          }
-          if (this.range) {
-            var m = this.range.match(/bytes=(\d+)-(\d+)/);
-            if (m) { start = +m[1]; end = +m[2] + 1; }
-          }
-          bytes = bytes.slice(start, end);
-          this.answer = { status: this.range ? 206 : 200, bytes: bytes, type: type };
-          return;
-        }
-        var r = Native.prototype.send.call(this, body);
-        if (this.path === '/game-manifest.txt' && this.status === 200 && entries) {
-          this.answer = {
-            status: 200,
-            text: this.responseText.trimEnd() + '\n' + entries + '\n'
-          };
-        }
-        return r;
-      }
-      get status() { return this.answer ? this.answer.status : Native.prototype.status; }
-      get readyState() { return this.answer ? 4 : Native.prototype.readyState; }
-      get responseText() {
-        if (this.answer) {
-          return this.answer.text || new TextDecoder().decode(this.answer.bytes);
-        }
-        return Native.prototype.responseText;
-      }
-      get response() {
-        if (this.answer) {
-          if (this.answer.bytes) {
-            return this.answer.type === 'arraybuffer' ? this.answer.bytes.buffer : new TextDecoder().decode(this.answer.bytes);
-          }
-          return this.answer.text;
-        }
-        return Native.prototype.response;
-      }
-    };
-  }
-
-  var NativeWorker = Worker;
-  window.Worker = class extends NativeWorker {
-    constructor(url, options) {
-      if (!options || options.name !== 'em-pthread') {
-        super(url, options);
-        return;
-      }
-      var original = new URL(String(url), location.href).href;
-      var source = 'const queue=[];function boot(e){if(!e.data||!e.data.__lhBoot){queue.push(e);return}removeEventListener("message",boot);(' +
-        installOverlay.toString() + ')(e.data.files,' + JSON.stringify(original) + ');importScripts(' + JSON.stringify(original) +
-        ');for(const event of queue)dispatchEvent(new MessageEvent("message",{data:event.data}));}addEventListener("message",boot);';
-      super(URL.createObjectURL(new Blob([source], { type: 'application/javascript' })), options);
-      this.postMessage({ __lhBoot: true, files: files });
-    }
-  };
-
-  installOverlay(files, base);
-  console.log('[LH] Local addons prepared:', folders);
-})();`;
 }
 
 function createWindow() {
@@ -394,11 +288,7 @@ function createWindow() {
   const addons = scanAddons();
 
   mainWindow.webContents.on('did-start-loading', () => {
-    if (addons.length === 0) return;
-    const code = buildInjection(addons);
-    mainWindow.webContents.executeJavaScript(code).catch(err =>
-      console.error('Addon injection failed:', err)
-    );
+    injectAddons(mainWindow.webContents, addons);
   });
 
   mainWindow.loadURL(lockedUrl);
@@ -549,22 +439,6 @@ function createWindow() {
 app.whenReady().then(() => {
   loadConfig();
   ensureAddonsDir();
-
-  protocol.handle('lhaddon', (request) => {
-    try {
-      const url = new URL(request.url);
-      let filePath = decodeURIComponent(url.pathname.replace(/^\/local\//, ''));
-      filePath = path.normalize(filePath);
-      const normalizedAddons = path.normalize(addonsDir);
-      if (!filePath.startsWith(normalizedAddons)) {
-        return new Response('Forbidden', { status: 403 });
-      }
-      return net.fetch('file://' + filePath);
-    } catch (e) {
-      console.error('lhaddon protocol error', e);
-      return new Response('Error', { status: 500 });
-    }
-  });
 
   const allowedPermissions = new Set([
     'clipboard-read',
