@@ -3,12 +3,10 @@ const path = require('path');
 const fs = require('fs');
 const https = require('https');
 
-// Must be called before app is ready
 protocol.registerSchemesAsPrivileged([
   { scheme: 'lhaddon', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }
 ]);
 
-// Force all app data into a local folder (fully portable)
 if (app.isPackaged) {
   const portableDir = path.dirname(process.execPath);
   const dataDir = path.join(portableDir, 'data');
@@ -56,8 +54,7 @@ function scanAddons() {
     if (!entry.isDirectory()) continue;
     const folder = entry.name;
     const folderPath = path.join(dir, folder);
-    const tocName = folder + '.toc';
-    const tocPath = path.join(folderPath, tocName);
+    const tocPath = path.join(folderPath, folder + '.toc');
     if (!fs.existsSync(tocPath)) continue;
 
     const files = {};
@@ -245,7 +242,6 @@ async function takeScreenshot() {
   }
 }
 
-// Adapted injection from lasthavens-addon-manager (runtime-core + loader)
 function buildInjection(addons) {
   const fileMap = {};
   const folders = [];
@@ -257,111 +253,121 @@ function buildInjection(addons) {
     }
   }
 
-  return `
-    (function() {
-      if (window.__lhAddonsInjected) return;
-      window.__lhAddonsInjected = true;
+  const filesJson = JSON.stringify(fileMap);
+  const foldersJson = JSON.stringify(folders);
 
-      const files = ${JSON.stringify(fileMap)};
-      const folders = ${JSON.stringify(folders)};
-      const base = location.href;
+  return `(
+function() {
+  if (window.__lhAddonsInjected) return;
+  window.__lhAddonsInjected = true;
 
-      function installOverlay(fileMap, baseUrl) {
-        const Native = XMLHttpRequest;
-        const paths = Object.keys(fileMap);
-        const entries = paths.map(p => fileMap[p].size + '\t' + p).join('\n');
+  const files = ${filesJson};
+  const folders = ${foldersJson};
+  const base = location.href;
 
-        window.XMLHttpRequest = class extends Native {
-          open(method, url, ...args) {
-            this.answer = null;
-            this.p = new URL(String(url), baseUrl);
-            this.method = method;
-            this.path = decodeURIComponent(this.p.pathname);
-            this.local = paths.find(p =>
-              this.path === '/game/' + p || this.path.startsWith('/blocks/' + p + '/')
-            );
-            this.bundle =
-              /^\/blocks\/Interface\/AddOns\/[^/]+\/bundle-/.test(this.path) &&
-              paths.some(p => this.path.startsWith('/blocks/' + p.split('/').slice(0, 3).join('/') + '/'));
+  function installOverlay(fileMap, baseUrl) {
+    const Native = XMLHttpRequest;
+    const paths = Object.keys(fileMap);
+    const entries = paths.map(function(p) { return fileMap[p].size + '\t' + p; }).join('\n');
 
-            const target = this.local ? ('lhaddon://local/' + encodeURIComponent(fileMap[this.local].path)) : this.p.href;
-            return super.open(method, target, ...args);
-          }
-          setRequestHeader(k, v) {
-            if (this.local && k.toLowerCase() === 'range') {
-              this.range = v;
-              return;
-            }
-            return super.setRequestHeader(k, v);
-          }
-          send(body) {
-            if (this.bundle && this.method === 'GET') {
-              this.answer = { status: 404, text: '' };
-              return;
-            }
-            if (this.local && this.method === 'GET') {
-              const type = this.responseType;
-              this.responseType = 'arraybuffer';
-              super.send();
-              let bytes = new Uint8Array(super.response);
-              let start = 0, end = bytes.length;
-              const block = this.path.match(/\/(\d+)-(\d+)-(\d+)k\.bin$/);
-              if (block) {
-                start = Number(block[2]) * Number(block[3]) * 1024;
-                end = start + Number(block[3]) * 1024;
-              }
-              if (this.range) {
-                const m = this.range.match(/bytes=(\d+)-(\d+)/);
-                if (m) { start = +m[1]; end = +m[2] + 1; }
-              }
-              bytes = bytes.slice(start, end);
-              this.answer = { status: this.range ? 206 : 200, bytes, type };
-              return;
-            }
-            const r = super.send(body);
-            if (this.path === '/game-manifest.txt' && super.status === 200 && entries) {
-              this.answer = {
-                status: 200,
-                text: super.responseText.trimEnd() + '\n' + entries + '\n'
-              };
-            }
-            return r;
-          }
-          get status() { return this.answer?.status ?? super.status; }
-          get readyState() { return this.answer ? 4 : super.readyState; }
-          get responseText() {
-            return this.answer
-              ? (this.answer.text ?? new TextDecoder().decode(this.answer.bytes))
-              : super.responseText;
-          }
-          get response() {
-            return this.answer
-              ? (this.answer.bytes
-                  ? (this.answer.type === 'arraybuffer' ? this.answer.bytes.buffer : new TextDecoder().decode(this.answer.bytes))
-                  : this.answer.text)
-              : super.response;
-          }
-        };
+    window.XMLHttpRequest = class extends Native {
+      open(method, url) {
+        var args = Array.prototype.slice.call(arguments, 2);
+        this.answer = null;
+        this.p = new URL(String(url), baseUrl);
+        this.method = method;
+        this.path = decodeURIComponent(this.p.pathname);
+        this.local = paths.find(function(p) {
+          return this.path === '/game/' + p || this.path.indexOf('/blocks/' + p + '/') === 0;
+        }, this);
+        this.bundle =
+          /^\/blocks\/Interface\/AddOns\/[^/]+\/bundle-/.test(this.path) &&
+          paths.some(function(p) {
+            return this.path.indexOf('/blocks/' + p.split('/').slice(0, 3).join('/') + '/') === 0;
+          }, this);
+
+        var target = this.local ? ('lhaddon://local/' + encodeURIComponent(fileMap[this.local].path)) : this.p.href;
+        return Native.prototype.open.apply(this, [method, target].concat(args));
       }
-
-      const NativeWorker = Worker;
-      window.Worker = class extends NativeWorker {
-        constructor(url, options) {
-          if (options?.name !== 'em-pthread') {
-            super(url, options);
-            return;
-          }
-          const original = new URL(String(url), location.href).href;
-          const source = \`const queue=[];function boot(e){if(!e.data?.__lhBoot){queue.push(e);return}removeEventListener('message',boot);(\${installOverlay.toString()})(e.data.files,\${JSON.stringify(original)});importScripts(\${JSON.stringify(original)});for(const event of queue)dispatchEvent(new MessageEvent('message',{data:event.data}));}addEventListener('message',boot);\`;
-          super(URL.createObjectURL(new Blob([source], { type: 'application/javascript' })), options);
-          this.postMessage({ __lhBoot: true, files: files });
+      setRequestHeader(k, v) {
+        if (this.local && k.toLowerCase() === 'range') {
+          this.range = v;
+          return;
         }
-      };
+        return Native.prototype.setRequestHeader.call(this, k, v);
+      }
+      send(body) {
+        if (this.bundle && this.method === 'GET') {
+          this.answer = { status: 404, text: '' };
+          return;
+        }
+        if (this.local && this.method === 'GET') {
+          var type = this.responseType;
+          this.responseType = 'arraybuffer';
+          Native.prototype.send.call(this);
+          var bytes = new Uint8Array(this.response);
+          var start = 0, end = bytes.length;
+          var block = this.path.match(/\/(\d+)-(\d+)-(\d+)k\.bin$/);
+          if (block) {
+            start = Number(block[2]) * Number(block[3]) * 1024;
+            end = start + Number(block[3]) * 1024;
+          }
+          if (this.range) {
+            var m = this.range.match(/bytes=(\d+)-(\d+)/);
+            if (m) { start = +m[1]; end = +m[2] + 1; }
+          }
+          bytes = bytes.slice(start, end);
+          this.answer = { status: this.range ? 206 : 200, bytes: bytes, type: type };
+          return;
+        }
+        var r = Native.prototype.send.call(this, body);
+        if (this.path === '/game-manifest.txt' && this.status === 200 && entries) {
+          this.answer = {
+            status: 200,
+            text: this.responseText.trimEnd() + '\n' + entries + '\n'
+          };
+        }
+        return r;
+      }
+      get status() { return this.answer ? this.answer.status : Native.prototype.status; }
+      get readyState() { return this.answer ? 4 : Native.prototype.readyState; }
+      get responseText() {
+        if (this.answer) {
+          return this.answer.text || new TextDecoder().decode(this.answer.bytes);
+        }
+        return Native.prototype.responseText;
+      }
+      get response() {
+        if (this.answer) {
+          if (this.answer.bytes) {
+            return this.answer.type === 'arraybuffer' ? this.answer.bytes.buffer : new TextDecoder().decode(this.answer.bytes);
+          }
+          return this.answer.text;
+        }
+        return Native.prototype.response;
+      }
+    };
+  }
 
-      installOverlay(files, base);
-      console.log('[LH] Local addons prepared:', folders);
-    })();
-  `;
+  var NativeWorker = Worker;
+  window.Worker = class extends NativeWorker {
+    constructor(url, options) {
+      if (!options || options.name !== 'em-pthread') {
+        super(url, options);
+        return;
+      }
+      var original = new URL(String(url), location.href).href;
+      var source = 'const queue=[];function boot(e){if(!e.data||!e.data.__lhBoot){queue.push(e);return}removeEventListener("message",boot);(' +
+        installOverlay.toString() + ')(e.data.files,' + JSON.stringify(original) + ');importScripts(' + JSON.stringify(original) +
+        ');for(const event of queue)dispatchEvent(new MessageEvent("message",{data:event.data}));}addEventListener("message",boot);';
+      super(URL.createObjectURL(new Blob([source], { type: 'application/javascript' })), options);
+      this.postMessage({ __lhBoot: true, files: files });
+    }
+  };
+
+  installOverlay(files, base);
+  console.log('[LH] Local addons prepared:', folders);
+})();`;
 }
 
 function createWindow() {
@@ -553,7 +559,7 @@ app.whenReady().then(() => {
       if (!filePath.startsWith(normalizedAddons)) {
         return new Response('Forbidden', { status: 403 });
       }
-      return net.fetch(`file://${filePath}`);
+      return net.fetch('file://' + filePath);
     } catch (e) {
       console.error('lhaddon protocol error', e);
       return new Response('Error', { status: 500 });
