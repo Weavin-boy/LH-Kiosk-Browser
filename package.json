@@ -1,0 +1,39 @@
+{
+  "name": "lasthavens-kiosk-browser",
+  "version": "1.0.4a",
+  "description": "Minimal locked-down Chromium browser locked to Lasthavens. Only title bar. Hotkeys: F11 fullscreen, F12 screenshot.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --publish never",
+    "build:win": "electron-builder --win dir --publish never"
+  },
+  "author": "Weavin-boy",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^45.4.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.weavin.lasthavenskioskbrowser",
+    "productName": "Lasthavens",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "package.json"
+    ],
+    "extraFiles": [
+      {
+        "from": "config.json",
+        "to": "config.json"
+      }
+    ],
+    "publish": null,
+    "win": {
+      "target": "dir",
+      "icon": null
+    }
+  }
+}
