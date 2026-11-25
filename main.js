@@ -24,6 +24,7 @@ let lockedUrl = 'https://lasthavens.com/play';
 let windowTitle = 'Lasthavens';
 let allowExternalNavigation = false;
 let addonsDir;
+let injectionScript = null;
 
 function getAddonsDir() {
   if (app.isPackaged) {
@@ -75,11 +76,21 @@ function scanAddons() {
   return addons;
 }
 
-function writePayloadFile(addons) {
-  const payloadPath = path.join(app.getPath('userData'), 'lh-payload.json');
-  fs.writeFileSync(payloadPath, JSON.stringify({ addons }), 'utf8');
-  console.log('Wrote payload', payloadPath, 'addons:', addons.length);
-  return payloadPath;
+function buildInjectionScript(addons) {
+  if (!addons.length) return null;
+  const injectDir = path.join(__dirname, 'inject');
+  const runtimeCore = fs.readFileSync(path.join(injectDir, 'runtime-core.js'), 'utf8');
+  const loader = fs.readFileSync(path.join(injectDir, 'loader.js'), 'utf8');
+  return 'window.__LH_PAYLOAD = ' + JSON.stringify({ addons }) + ';\n' + runtimeCore + '\n' + loader;
+}
+
+function injectAddons(webContents) {
+  if (!injectionScript) return;
+  webContents.executeJavaScript(injectionScript).then(() => {
+    console.log('[LH] main-process injection executed');
+  }).catch(err => {
+    console.error('[LH] main-process injection failed:', err);
+  });
 }
 
 function isValidHttpsUrl(url) {
@@ -248,7 +259,9 @@ async function takeScreenshot() {
 
 function createWindow() {
   const addons = scanAddons();
-  const payloadPath = writePayloadFile(addons);
+  injectionScript = buildInjectionScript(addons);
+  const payloadPath = path.join(app.getPath('userData'), 'lh-payload.json');
+  fs.writeFileSync(payloadPath, JSON.stringify({ addons }), 'utf8');
 
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -261,8 +274,8 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'inject', 'preload.js'),
       additionalArguments: ['--lh-payload=' + payloadPath],
-      nodeIntegration: false,
-      contextIsolation: false, // allow preload to use Node (fs)
+      nodeIntegration: true,
+      contextIsolation: false,
       sandbox: false,
       webSecurity: true,
       devTools: true,
@@ -274,6 +287,15 @@ function createWindow() {
 
   // Open DevTools automatically (testing)
   mainWindow.webContents.openDevTools({ mode: 'detach' });
+
+  // Early main-process injection (fallback if preload fails)
+  mainWindow.webContents.on('did-start-navigation', () => {
+    injectAddons(mainWindow.webContents);
+  });
+
+  mainWindow.webContents.on('did-start-loading', () => {
+    injectAddons(mainWindow.webContents);
+  });
 
   mainWindow.loadURL(lockedUrl);
 
