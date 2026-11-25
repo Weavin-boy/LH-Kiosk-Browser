@@ -242,6 +242,7 @@ async function takeScreenshot() {
 function writePayloadFile(addons) {
   const payloadPath = path.join(app.getPath('userData'), 'lh-payload.json');
   fs.writeFileSync(payloadPath, JSON.stringify({ addons }), 'utf8');
+  console.log('Wrote payload to', payloadPath, 'addons:', addons.length);
   return payloadPath;
 }
 
@@ -262,7 +263,7 @@ function createWindow() {
       additionalArguments: ['--lh-payload=' + payloadPath],
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: false, // needed so preload can read the payload file
+      sandbox: false,
       webSecurity: true,
       devTools: true,
       enableBlinkFeatures: 'Gamepad',
@@ -270,6 +271,10 @@ function createWindow() {
   });
 
   mainWindow.setMenu(null);
+
+  // Open DevTools automatically so we can see injection logs (testing builds)
+  mainWindow.webContents.openDevTools({ mode: 'detach' });
+
   mainWindow.loadURL(lockedUrl);
 
   mainWindow.webContents.on('page-favicon-updated', async (event, favicons) => {
@@ -311,6 +316,17 @@ function createWindow() {
 
   mainWindow.webContents.on('before-input-event', (event, input) => {
     const { key, control, alt, meta, shift } = input;
+
+    // Ctrl+Shift+I toggles DevTools
+    if ((control || meta) && shift && key.toLowerCase() === 'i') {
+      event.preventDefault();
+      if (mainWindow.webContents.isDevToolsOpened()) {
+        mainWindow.webContents.closeDevTools();
+      } else {
+        mainWindow.webContents.openDevTools({ mode: 'detach' });
+      }
+      return;
+    }
 
     if (key === 'F11') {
       event.preventDefault();
