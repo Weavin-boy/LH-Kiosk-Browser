@@ -12,9 +12,9 @@ Forked/adapted from [simple-kiosk-browser](https://github.com/Weavin-boy/simple-
 
 [Download the latest release](https://github.com/Weavin-boy/LH-Kiosk-Browser/releases/latest)
 
-**SHA-256** of `LH-Kiosk-Portable.zip` (v1.0):
+**SHA-256** of `LH-Kiosk-Portable.zip` (v1.0.0a):
 ```
-9535e850221d7bc8dad98d7a5d88934f0ff415dd3ea8edc9b46ede78c874d985
+2a56a926691e0f5ca77a6c28f2c41fe58c9ac2a8c14dda0d17f69a45315d4bf8
 ```
 
 ## Local Addons
