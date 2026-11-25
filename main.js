@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Notification, nativeImage, session } = require('electron');
+const { app, BrowserWindow, Notification, nativeImage, session, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
@@ -82,15 +82,6 @@ function buildInjectionScript(addons) {
   const runtimeCore = fs.readFileSync(path.join(injectDir, 'runtime-core.js'), 'utf8');
   const loader = fs.readFileSync(path.join(injectDir, 'loader.js'), 'utf8');
   return 'window.__LH_PAYLOAD = ' + JSON.stringify({ addons }) + ';\n' + runtimeCore + '\n' + loader;
-}
-
-function injectAddons(webContents) {
-  if (!injectionScript) return;
-  webContents.executeJavaScript(injectionScript).then(() => {
-    console.log('[LH] main-process injection executed');
-  }).catch(err => {
-    console.error('[LH] main-process injection failed:', err);
-  });
 }
 
 function isValidHttpsUrl(url) {
@@ -260,8 +251,6 @@ async function takeScreenshot() {
 function createWindow() {
   const addons = scanAddons();
   injectionScript = buildInjectionScript(addons);
-  const payloadPath = path.join(app.getPath('userData'), 'lh-payload.json');
-  fs.writeFileSync(payloadPath, JSON.stringify({ addons }), 'utf8');
 
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -273,10 +262,9 @@ function createWindow() {
     titleBarStyle: 'default',
     webPreferences: {
       preload: path.join(__dirname, 'inject', 'preload.js'),
-      additionalArguments: ['--lh-payload=' + payloadPath],
-      nodeIntegration: true,
-      contextIsolation: false,
-      sandbox: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
       webSecurity: true,
       devTools: true,
       enableBlinkFeatures: 'Gamepad',
@@ -288,13 +276,12 @@ function createWindow() {
   // Open DevTools automatically (testing)
   mainWindow.webContents.openDevTools({ mode: 'detach' });
 
-  // Early main-process injection (fallback if preload fails)
-  mainWindow.webContents.on('did-start-navigation', () => {
-    injectAddons(mainWindow.webContents);
-  });
-
-  mainWindow.webContents.on('did-start-loading', () => {
-    injectAddons(mainWindow.webContents);
+  // Preload signals when it is ready; we immediately send the injection script
+  ipcMain.on('lh-preload-ready', (event) => {
+    if (injectionScript && event.sender === mainWindow.webContents) {
+      console.log('[LH] sending injection to preload');
+      event.sender.send('lh-inject', injectionScript);
+    }
   });
 
   mainWindow.loadURL(lockedUrl);
