@@ -431,7 +431,6 @@ app.whenReady().then(() => {
   ensureAddonsDir();
 
   const allowedPermissions = new Set([
-    'clipboard-read',
     'clipboard-sanitized-write',
     'pointerLock',
     'keyboardLock',
