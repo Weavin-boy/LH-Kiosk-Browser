@@ -12,9 +12,9 @@ Forked/adapted from [simple-kiosk-browser](https://github.com/Weavin-boy/simple-
 
 [Download the latest release](https://github.com/Weavin-boy/LH-Kiosk-Browser/releases/latest)
 
-**SHA-256** of `Lasthavens-Portable.zip` (v1.0):
+**SHA-256** of `Lasthavens-Portable.zip` (v1.0.0a):
 ```
-12bc2e19a7102803fc3d6ee4771be995dfb663b6e637b05f2f178e71c0667b60
+7195657890fbe0ffcbaada89320962fafe5a8cb15f6d6d9125d1adad8a47093a
 ```
 
 ## Local Addons
