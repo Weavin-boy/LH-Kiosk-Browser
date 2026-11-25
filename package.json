@@ -11,6 +11,7 @@
   "author": "Weavin-boy",
   "license": "MIT",
   "devDependencies": {
+    "@electron/fuses": "^1.8.0",
     "electron": "^45.4.1",
     "electron-builder": "^25.1.8"
   },
@@ -36,16 +37,7 @@
         "filter": ["**/*"]
       }
     ],
-    "electronFuses": {
-      "runAsNode": false,
-      "enableCookieEncryption": true,
-      "enableNodeOptionsEnvironmentVariable": false,
-      "enableNodeCliInspectArguments": false,
-      "enableEmbeddedAsarIntegrityValidation": true,
-      "onlyLoadAppFromAsar": true,
-      "loadBrowserProcessSpecificV8Snapshot": false,
-      "grantFileProtocolExtraPrivileges": false
-    },
+    "afterPack": "./scripts/afterPack.js",
     "publish": null,
     "win": {
       "target": "dir",
