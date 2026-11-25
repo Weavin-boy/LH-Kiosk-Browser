@@ -8,6 +8,15 @@ It shows only the title bar and stays on Lasthavens (or the same domain, includi
 
 Forked/adapted from [simple-kiosk-browser](https://github.com/Weavin-boy/simple-kiosk-browser).
 
+## Download
+
+[Download the latest release](https://github.com/Weavin-boy/LH-Kiosk-Browser/releases/latest)
+
+**SHA-256** of `Lasthavens-Portable.zip` (v1.0):
+```
+12bc2e19a7102803fc3d6ee4771be995dfb663b6e637b05f2f178e71c0667b60
+```
+
 ## Local Addons
 
 The app supports local WoW 3.3.5a addons. The injection code is based on the [Lasthavens Addon Manager](https://github.com/Jamba777/lasthavens-addon-manager) Chrome extension by Jamba777. Credit to them for the overlay technique.
