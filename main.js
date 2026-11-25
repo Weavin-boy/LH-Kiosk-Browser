@@ -266,15 +266,12 @@ function createWindow() {
       contextIsolation: true,
       sandbox: true,
       webSecurity: true,
-      devTools: true,
+      devTools: false,
       enableBlinkFeatures: 'Gamepad',
     },
   });
 
   mainWindow.setMenu(null);
-
-  // Open DevTools automatically (testing)
-  mainWindow.webContents.openDevTools({ mode: 'detach' });
 
   // Preload signals when it is ready; we immediately send the injection script
   ipcMain.on('lh-preload-ready', (event) => {
@@ -325,16 +322,6 @@ function createWindow() {
 
   mainWindow.webContents.on('before-input-event', (event, input) => {
     const { key, control, alt, meta, shift } = input;
-
-    if ((control || meta) && shift && key.toLowerCase() === 'i') {
-      event.preventDefault();
-      if (mainWindow.webContents.isDevToolsOpened()) {
-        mainWindow.webContents.closeDevTools();
-      } else {
-        mainWindow.webContents.openDevTools({ mode: 'detach' });
-      }
-      return;
-    }
 
     if (key === 'F11') {
       event.preventDefault();
