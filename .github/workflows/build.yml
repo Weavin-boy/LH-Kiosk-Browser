@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g. 1.0.4a)'
+        description: 'Version to release (e.g. 1.0.0a)'
         required: true
-        default: '1.0.4a'
+        default: '1.0.0a'
 
 permissions:
   contents: write
@@ -28,7 +28,7 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build portable app
         run: npm run build:win
@@ -62,10 +62,18 @@ jobs:
         uses: softprops/action-gh-release@28ab305d0ffa26d60ec4bd614126329e26c7a0ec # v3.0.4
         with:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.ref_name }}
-          name: Lasthavens ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.ref_name }}
+          name: LH-Kiosk-Browser ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.ref_name }}
           body: |
             SHA-256 of Lasthavens-Portable.zip:
             `${{ steps.sha.outputs.sha256 }}`
+
+            Electron fuses:
+            - runAsNode: false
+            - enableCookieEncryption: true
+            - enableNodeOptionsEnvironmentVariable: false
+            - enableNodeCliInspectArguments: false
+            - enableEmbeddedAsarIntegrityValidation: true
+            - onlyLoadAppFromAsar: true
           files: dist/Lasthavens-Portable.zip
           generate_release_notes: true
         env:
