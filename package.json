@@ -1,7 +1,7 @@
 {
   "name": "lasthavens-kiosk-browser",
   "version": "1.0.4a",
-  "description": "Minimal locked-down Chromium browser locked to Lasthavens. Only title bar. Hotkeys: F11 fullscreen, F12 screenshot.",
+  "description": "Minimal locked-down Chromium browser locked to Lasthavens. Only title bar. Hotkeys: F11 fullscreen, F12 screenshot. Testing branch includes local addon support.",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -28,6 +28,11 @@
       {
         "from": "config.json",
         "to": "config.json"
+      },
+      {
+        "from": "addons",
+        "to": "addons",
+        "filter": ["**/*", "!README.md"]
       }
     ],
     "publish": null,
