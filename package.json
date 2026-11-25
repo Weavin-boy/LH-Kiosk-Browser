@@ -1,6 +1,6 @@
 {
   "name": "lh-kiosk-browser",
-  "version": "1.0.0a",
+  "version": "1.0.0",
   "description": "Minimal locked-down Chromium browser locked to Lasthavens with local addon support. Only title bar. Hotkeys: F11 fullscreen, F12 screenshot. No association with Lasthavens.",
   "main": "main.js",
   "scripts": {
