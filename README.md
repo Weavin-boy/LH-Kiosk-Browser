@@ -37,6 +37,7 @@ See `addons/README.txt` for a short reminder.
 - Window title: Lasthavens
 - Navigation is limited to the lasthavens.com domain (subdomains are allowed)
 - Set `"allowExternalNavigation": true` in `config.json` to allow leaving the domain
+- Title-bar X button closes the window (works even if the page tries to prevent it)
 - F11 = fullscreen
 - F12 = screenshot (saved next to the app)
 - Ctrl/Cmd + C / V / X / A work
