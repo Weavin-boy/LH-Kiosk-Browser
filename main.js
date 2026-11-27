@@ -260,6 +260,9 @@ function createWindow() {
     menuBarVisible: false,
     frame: true,
     titleBarStyle: 'default',
+    closable: true,
+    minimizable: true,
+    maximizable: true,
     webPreferences: {
       preload: path.join(__dirname, 'inject', 'preload.js'),
       nodeIntegration: false,
@@ -272,6 +275,20 @@ function createWindow() {
   });
 
   mainWindow.setMenu(null);
+
+  // The loaded page (Lasthavens / many game sites) often registers a
+  // beforeunload handler that cancels the close. Electron honors that by
+  // default, which makes the native title-bar X button do nothing.
+  // Ignore any such attempt so the window can always be closed.
+  mainWindow.webContents.on('will-prevent-unload', (event) => {
+    event.preventDefault();
+  });
+
+  // Extra safety: if anything still tries to cancel the close, force it.
+  mainWindow.on('close', (event) => {
+    event.preventDefault();
+    mainWindow.destroy();
+  });
 
   // Preload signals when it is ready; we immediately send the injection script
   ipcMain.on('lh-preload-ready', (event) => {
